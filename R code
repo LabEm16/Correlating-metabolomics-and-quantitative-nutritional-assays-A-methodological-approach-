@@ -1,0 +1,891 @@
+##DATA: libraries,setting up data, RUN no need to rerun can just grab 
+```{r}
+#Set the working directory to the directory on your computer where you've put your MZmine, FBMN/GNPS, and Sirius/Qemistree output files & set up library 
+library(dplyr)
+library(dendextend)
+library(networkD3)
+library(patchwork)
+library(ggrepel)
+library(lmerTest) 
+library(ape)
+library(parallel)
+library(splitstackshape)
+library(dplyr)
+library(data.table)
+library(doParallel)
+library(here)
+library(foreach)
+library(car)
+library(reshape2)
+library(gplots)
+library(lmtest)
+library(cowplot)
+library(DESeq2)
+library(tibble)
+library(tidyr)
+library(reshape2)
+library(ggplot2)
+library(readxl)
+library(openxlsx)
+library(glmnet)
+library(randomForest)
+library(stats)
+library(DHARMa)
+library(vegan)
+library(broom)
+library(lme4)
+meta <- read.xlsx(xlsxFile = "PSM Data/Metadata.xlsx", sheet = 1 , detectDates = TRUE)
+meta3 <- read.xlsx("PSM Data/Metadata.xlsx", sheet= 2, detectDates = TRUE)
+meta2 <- read.xlsx("PSM Data/Metadata.xlsx", sheet= 3, detectDates = TRUE)
+meta1 <- read.xlsx("PSM Data/Metadata.xlsx", sheet= 4, detectDates = TRUE)
+meta1
+meta3
+meta1 <- na.omit(meta1)
+meta2 <- na.omit(meta2)
+meta3 <- na.omit(meta3)
+meta <- na.omit(meta)
+```
+Mzmine feature table 
+```{r}
+### MZmine features tables (ion counts in the samples)
+feat = read.csv("PSM Data/MZmine/02282024/MZmine_OutputFiles/EmmaT_02282024_iimn_gnps_quant.csv")
+nrow(feat)
+dim(feat) 
+View(feat)
+#53406 240 
+feat=feat[,-which(names(feat) == "X")] #removes extra column labeled as X that appears from the Mzmine file 
+nrow(feat)
+head(feat)
+dim(feat) # -1 row 
+#53406 239 
+```
+Read table - sirid 
+```{r}
+### Molecular formulae and structural smiles
+CI1 <- read.table("PSM Data/Sirius/compound_identifications_1.tsv", header = T, sep = "\t", comment.char = "")
+CI2 <- read.table("PSM Data/Sirius/compound_identifications_2.tsv", header = T, sep = "\t", comment.char = "")
+CI3 <- read.table("PSM Data/Sirius/compound_identifications_3.tsv", header = T, sep = "\t", comment.char = "")
+sirid = rbind(CI1, CI2, CI3)
+#Check to make sure all data is there 
+nrow(CI1)+nrow(CI2) + nrow(CI3) 
+head(sirid)
+nrow(sirid)
+```
+Sirid, network 
+```{r}
+### NPclassifier results
+CF1 <- read.table("PSM Data/Sirius/canopus_formula_summary_1.tsv", header = T, sep = "\t", comment.char = "", quote = "")
+CF2 <- read.table("PSM Data/Sirius/canopus_formula_summary_2.tsv", header = T, sep = "\t", comment.char = "", quote = "")
+CF3 <- read.table("PSM Data/Sirius/canopus_formula_summary_3.tsv",header = T, sep = "\t", comment.char = "", quote = "")
+CF3
+sirca = rbind(CF1, CF2, CF3)
+head(sirca)
+nrow(sirca)
+sirca <- sirca[sirca$NPC.pathway.Probability >= 0.90, ]
+
+network = read.delim("PSM Data/GNPS/GNPS_Out/ProteoSAFe-FEATURE-BASED-MOLECULAR-NETWORKING-a99ea572-download_qza_table_data/networkedges_selfloop/b8d5bffce1734767a332855a414df035..selfloop",  header = T, comment.char = "")
+head(network)
+
+dim(network)
+# [1] 67445   8
+dim(feat)
+# [1] 53406 239
+dim(sirid)
+# [1] 27758 21 
+dim(sirca)
+# [1] 15391, 20 
+```
+LC metadata assembly 
+```{r}
+### --- Save the LC metadata for df assembly later
+head(feat)
+featLC = feat[,1:13] 
+featLC$molecularFormula = NA
+featLC$InChIkey2D = NA
+featLC$InChI = NA
+featLC$smiles = NA
+featLC$NPC.pathway = NA
+featLC$NPC.superclass = NA
+featLC$NPC.class = NA
+featLC$ClassyFire.most.specific.class = NA
+```
+Sirid, sirca
+```{r}
+nrow(sirid)
+sirid$featID = NA
+sirid$featID = NA
+for(i in 1:nrow(sirid)) {
+  sirid$featID[i] = gsub(".+_(sirius_1|sirius_2|sirius_3)_", "", sirid$id[i])
+}
+nrow(sirid) 
+tail(sirid)
+
+sirca$featID = NA
+for(i in 1:nrow(sirca)) {
+  sirca$featID[i] = gsub(".+_(sirius_1|sirius_2|sirius_3)_", "", sirca$id[i])
+}
+```
+Dataframe with LC features, CLassyfire, NPC classfier data
+```{r}
+#populate feat dataframe with LC features, Classyfire, and NPclassifier data
+for(i in 1:nrow(feat)){
+    tempid = feat$row.ID[i]
+    featLC$molecularFormula[i] = sirid$molecularFormula[which(sirid$featID == tempid)][1]
+    featLC$InChIkey2D[i] = sirid$InChIkey2D[which(sirid$featID == tempid)][1] 
+    featLC$InChI[i] = sirid$InChI[which(sirid$featID == tempid)][1] 
+    featLC$smiles[i] = sirid$smiles[which(sirid$featID == tempid)][1]
+    featLC$NPC.pathway[i] = sirca$NPC.pathway[which(sirca$featID == tempid)][1]
+    featLC$NPC.superclass[i] = sirca$NPC.superclass[which(sirca$featID == tempid)][1]
+    featLC$NPC.class[i] = sirca$NPC.class[which(sirca$featID == tempid)][1]
+    featLC$ClassyFire.most.specific.class[i] = sirca$ClassyFire.most.specific.class[which(sirca$featID == tempid)][1]
+}
+
+featLC$row.ID
+View(featLC)
+nrow(featLC)
+
+featLC2 <- featLC[!is.na(featLC$NPC.class), ] 
+nrow(featLC2)
+```
+Mastertable
+```{r}
+mastertable = cbind(featLC,feat[1:ncol(feat)])
+dim(mastertable)
+# [1] 53406 244 
+head(mastertable)
+
+mastertable2 <- mastertable[!is.na(mastertable$NPC.pathway), , drop = FALSE]
+View(mastertable2)
+head(mastertable2)
+```
+Removing blanks
+```{r}
+master.real = mastertable[which(rowSums(mastertable[,grep("BLANK", names(mastertable))]) == 0),]
+master.real=master.real[,-grep("BLANK", names(master.real))]
+master.real=master.real[,-grep("Blank", names(master.real))]
+names(master.real)
+dim(mastertable)
+# [1] 53406  244
+dim(master.real)
+#[1] 40308 241 #minus the three blanks 
+master.real
+View(master.real)
+
+master.real2 = mastertable2[which(rowSums(mastertable2[,grep("BLANK", names(mastertable2))]) == 0),]
+master.real2=master.real2[,-grep("BLANK", names(master.real2))]
+master.real2=master.real2[,-grep("Blank", names(master.real2))]
+names(master.real2)
+View(master.real2)
+dim(master.real2) #[1] 10934 257 #minus the three blanks 
+```
+Masterdata
+```{r}
+mastertable$row.ID
+rownames(mastertable) <- mastertable$row.ID
+mastertable
+rownames(mastertable2) <- mastertable2$row.ID
+mastertable2
+rownames(master.real) <- master.real$row.ID
+rownames(master.real2)<- master.real2$row.ID
+master.real
+master.real2
+```
+Step 1A. Data setup
+```{r}
+TNC = read_excel("PSM Data/nutrient datasheet.xlsx", sheet=1)
+TNC = TNC[, c("PSM_match", "Species", "Part", "TNC")]  
+CGYL_tnc = TNC %>% 
+  filter(Part == "YL") %>%
+  filter(Species == "Celtis durandii") 
+CGML_tnc = TNC%>%
+  filter(Part == "ML")%>%
+  filter(Species == "Celtis durandii") %>%
+  filter(PSM_match != 78)
+View(TNC)
+
+NDF = read_excel("PSM Data/nutrient datasheet.xlsx", sheet=1)
+NDF = NDF[, c("PSM_match", "Species", "Part", "NDF/dm %")]  
+colnames(NDF)[colnames(NDF)=="NDF/dm %"] <- "NDF"
+CGYL_ndf = NDF %>% 
+  filter(Part == "YL") %>%
+  filter(Species == "Celtis durandii")
+CGML_ndf = NDF%>%
+  filter(Part == "ML")%>%
+  filter(Species == "Celtis durandii")
+View(NDF)
+
+ADF = read_excel("PSM Data/nutrient datasheet.xlsx", sheet=1)
+ADF = ADF[, c("PSM_match", "Species", "Part", "ADF/dm %")]  
+colnames(ADF)[colnames(ADF)=="ADF/dm %"] <- "ADF"
+CGYL_adf = ADF %>% 
+  filter(Part == "YL") %>%
+  filter(Species == "Celtis durandii") 
+CGML_adf = ADF%>%
+  filter(Part == "ML")%>%
+  filter(Species == "Celtis durandii") 
+View(ADF)
+
+ADL = read_excel("PSM Data/nutrient datasheet.xlsx", sheet=1)
+ADL = ADL[, c("PSM_match", "Species", "Part", "Lignin/dm%")]  
+colnames(ADL)[colnames(ADL)=="Lignin/dm%"] <- "ADL"
+CGYL_adl = ADL %>% 
+  filter(Part == "YL") %>%
+  filter(Species == "Celtis durandii") 
+CGML_adl = ADL%>%
+  filter(Part == "ML")%>%
+  filter(Species == "Celtis durandii") 
+View(ADL)
+
+CP = read_excel("PSM Data/nutrient datasheet.xlsx", sheet=1)
+CP =CP[, c("PSM_match", "Species", "Part", "Crude Protein %")]  
+colnames(CP)[colnames(CP)=="Crude Protein %"] <- "CP"
+CGYL_CP = CP %>% 
+  filter(Part == "YL") %>%
+  filter(Species == "Celtis durandii")
+CGML_CP = CP%>%
+  filter(Part == "ML")%>%
+  filter(Species == "Celtis durandii") 
+View(CP)
+
+AP = read_excel("PSM Data/nutrient datasheet.xlsx", sheet=1)
+AP =AP[, c("PSM_match", "Species", "Part", "AP")]  
+colnames(AP)[colnames(AP)=="AP"] <- "AP"
+CGYL_AP = AP %>% 
+  filter(Part == "YL") %>%
+  filter(Species == "Celtis durandii") 
+CGML_AP = AP%>%
+  filter(Part == "ML")%>%
+  filter(Species == "Celtis durandii") 
+View(AP)
+
+Fat = read_excel("PSM Data/nutrient datasheet.xlsx", sheet=1)
+Fat = Fat[, c("PSM_match", "Species", "Part", "Crude Fat %")]  
+colnames(Fat)[colnames(Fat)=="Crude Fat %"] <- "Fat"
+CGYL_Fat = Fat %>% 
+  filter(Part == "YL") %>%
+  filter(Species == "Celtis durandii")
+CGML_Fat = Fat%>%
+  filter(Part == "ML")%>%
+  filter(Species == "Celtis durandii") 
+View(Fat)
+
+Sugar = read_excel("PSM Data/nutrient datasheet.xlsx", sheet = 1)
+Sugar = Sugar[, c("PSM_match", "Species", "Part", "Sugar")]  
+colnames(Sugar)[colnames(Sugar)=="Sugar"] <- "Sugar"
+CGYL_Sugar = Sugar %>% 
+  filter(Part == "YL") %>%
+  filter(Species == "Celtis durandii")
+CGML_Sugar = Sugar%>%
+  filter(Part == "ML")%>%
+  filter(Species == "Celtis durandii") 
+View(Sugar)
+
+Starch = read_excel("PSM Data/nutrient datasheet.xlsx", sheet = 1)
+Starch = Starch[, c("PSM_match", "Species", "Part", "STARCH")]  
+colnames(Starch)[colnames(Starch)=="STARCH"] <- "Starch"
+CGYL_Starch = Starch %>% 
+  filter(Part == "YL") %>%
+  filter(Species == "Celtis durandii") 
+CGML_Starch = Starch%>%
+  filter(Part == "ML")%>%
+  filter(Species == "Celtis durandii") 
+View(Starch)
+```
+Step 1b: Carbs 
+```{r}
+shikimates = subset(master.real2, NPC.pathway == "Shikimates and Phenylpropanoids")
+shikimates_full <- shikimates %>%
+  group_by(NPC.pathway) %>%
+  summarise(across(starts_with("BWCET"), ~ sum(.x, na.rm = TRUE)))
+colnames(shikimates_full) <- gsub("BWCET|\\.mzXML.Peak.area", "", colnames(shikimates_full))
+write.csv(shikimates_full, "Shikimates.csv")
+
+carbohydrates_subset <- subset(master.real2, NPC.pathway == "Carbohydrates")
+carbohydrates_subset
+View(carbohydrates_subset)
+carbs_full <- carbohydrates_subset %>%
+  group_by(NPC.pathway) %>%
+  summarise(across(starts_with("BWCET"), ~ sum(.x, na.rm = TRUE)))
+
+colnames(carbs_full) <- gsub("BWCET|\\.mzXML.Peak.area", "", colnames(carbs_full))
+write.csv(carbs_full, "Carbs.csv")
+```
+Step 1B: Data setup: Protein
+```{r}
+protein_subset <- subset(master.real2, NPC.pathway == "Amino acids and Peptides")
+
+protein_full <- protein_subset %>%
+  group_by(NPC.pathway) %>%
+  summarise(across(starts_with("BWCET"), ~ sum(.x, na.rm = TRUE)))
+
+colnames(protein_full) <- gsub("BWCET|\\.mzXML.Peak.area", "", colnames(protein_full))
+
+write.csv(protein_full, "Protein_full.csv", row.names = FALSE)
+```
+Step 1C: Dataset up: Fats 
+```{r}
+fat_subset <- subset(master.real2, NPC.pathway == "Fatty acids")
+fat_subset
+print(levels(as.factor(fat_subset$NPC.class)))
+
+fat_full <- fat_subset %>%
+  group_by(NPC.pathway) %>%
+  summarise(across(starts_with("BWCET"), ~ sum(.x, na.rm = TRUE)))
+
+colnames(fat_full) <- gsub("BWCET|\\.mzXML.Peak.area", "", colnames(fat_full))
+write.csv(fat_full, "fat.csv")
+```
+Step #2: Carbs (TNC, NDF, ADF, ADL, Sugars) Correlation scaled/log & CGYL
+```{r}
+shikimates_full <- read.csv("PSM Data/Correlation/Shikimates.csv")
+carbs_full <- read.csv("PSM Data/Correlation/Carbs.csv")
+
+nutrient_list <- list(
+  list(df = CGYL_tnc,    col = "TNC",    dataset = "CGYL"),
+  list(df = CGML_tnc,    col = "TNC",    dataset = "CGML"),
+  list(df = CGYL_ndf,    col = "NDF",    dataset = "CGYL"),
+  list(df = CGML_ndf,    col = "NDF",    dataset = "CGML"),
+  list(df = CGYL_adf,    col = "ADF",    dataset = "CGYL"),
+  list(df = CGML_adf,    col = "ADF",    dataset = "CGML"),
+  list(df = CGYL_adl,    col = "ADL",    dataset = "CGYL"),
+  list(df = CGML_adl,    col = "ADL",    dataset = "CGML"),
+  list(df = CGYL_Sugar,  col = "Sugar",  dataset = "CGYL"),
+  list(df = CGML_Sugar,  col = "Sugar",  dataset = "CGML"),
+  list(df = CGYL_Starch, col = "Starch", dataset = "CGYL"),
+  list(df = CGML_Starch, col = "Starch", dataset = "CGML")
+)
+
+results <- data.frame(
+  Dataset  = character(),
+  SubGroup = character(),
+  Measure  = character(),
+  N        = integer(),
+  rho      = numeric(),
+  R2       = numeric(),
+  p_value  = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (item in nutrient_list) {
+  
+  merged_data <- merge(carbs_full, item$df,
+                       by.x = "NPC.pathway",
+                       by.y = "PSM_match")
+  
+  if (nrow(merged_data) == 0) next
+  
+  merged_data$Carbohydrates_log <- log1p(merged_data$Carbohydrates)
+  
+  correlation_test <- cor.test(
+    merged_data$Carbohydrates_log,
+    merged_data[[item$col]],
+    method = "spearman",
+    use = "complete.obs",
+    exact = FALSE
+  )
+  
+  rho_val <- unname(correlation_test$estimate)
+  
+  results <- rbind(results, data.frame(
+    Dataset  = "carbs_full",
+    SubGroup = item$dataset,
+    Measure  = item$col,
+    N        = sum(complete.cases(merged_data$Carbohydrates_log,
+                                  merged_data[[item$col]])),
+    rho      = rho_val,
+    R2       = rho_val^2,
+    p_value  = correlation_test$p.value
+  ))
+}
+
+for (item in nutrient_list) {
+  
+  merged_data <- merge(shikimates_full, item$df,
+                       by.x = "NPC.pathway",
+                       by.y = "PSM_match")
+  
+  if (nrow(merged_data) == 0) next
+  
+  merged_data$Shikimates_log <- log1p(merged_data$Shikimates)
+  
+  correlation_test <- cor.test(
+    merged_data$Shikimates_log,
+    merged_data[[item$col]],
+    method = "spearman",
+    use = "complete.obs",
+    exact = FALSE
+  )
+  
+  rho_val <- unname(correlation_test$estimate)
+  
+  results <- rbind(results, data.frame(
+    Dataset  = "shikimates_full",
+    SubGroup = item$dataset,
+    Measure  = item$col,
+    N        = sum(complete.cases(merged_data$Shikimates_log,
+                                  merged_data[[item$col]])),
+    rho      = rho_val,
+    R2       = rho_val^2,
+    p_value  = correlation_test$p.value
+  ))
+}
+wb <- createWorkbook()
+
+dataset_labels <- c(
+  carbs_full      = "carbs_full",
+  shikimates_full = "shik_full"
+)
+for (subgroup in c("CGYL", "CGML")) {
+  for (dataset in names(dataset_labels)) {
+    tab_name   <- paste0(subgroup, "_", dataset_labels[[dataset]])
+    sheet_data <- results[results$SubGroup == subgroup & results$Dataset == dataset, ]
+    addWorksheet(wb, tab_name)
+    writeData(wb, tab_name, sheet_data)
+  }
+}
+
+saveWorkbook(wb, "Carbs_Shikimates_Correlation_Results.xlsx", overwrite = TRUE)
+```
+Step #3: Protein (AP, CP)
+```{r}
+protein_full <- read.csv("PSM Data/Correlation/Protein_full.csv")
+nutrient_list_protein <- list(
+  list(df = CGYL_CP,  col = "CP", dataset = "CGYL"),
+  list(df = CGML_CP,  col = "CP", dataset = "CGML"),
+  list(df = CGYL_AP,  col = "AP", dataset = "CGYL"),
+  list(df = CGML_AP,  col = "AP", dataset = "CGML")
+)
+
+results_protein <- data.frame(
+  Dataset  = character(),
+  SubGroup = character(),
+  Measure  = character(),
+  N        = integer(),
+  rho      = numeric(),
+  R2       = numeric(),
+  p_value  = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (item in nutrient_list_protein) {
+  merged_data <- merge(protein_full, item$df, by.x = "NPC.pathway", by.y = "PSM_match")
+  
+  if (nrow(merged_data) == 0) {
+    message("Skipping ", item$dataset, " ", item$col, " - no rows after merge")
+    next
+  }
+  
+  merged_data$Protein_log <- log1p(merged_data$Amino.acids.and.Peptides)
+  
+  correlation_test <- cor.test(
+    merged_data$Protein_log,
+    merged_data[[item$col]],
+    method = "spearman",
+    use = "complete.obs",
+    exact = FALSE
+  )
+  
+  rho_val <- unname(correlation_test$estimate)
+  
+  results_protein <- rbind(results_protein, data.frame(
+    Dataset  = "protein_full",
+    SubGroup = item$dataset,
+    Measure  = item$col,
+    N        = sum(complete.cases(merged_data$Protein_log, merged_data[[item$col]])),
+    rho      = rho_val,
+    R2       = rho_val^2,
+    p_value  = correlation_test$p.value
+  ))
+}
+
+wb_protein <- createWorkbook()
+
+for (subgroup in c("CGYL", "CGML")) {
+  for (dataset in c("protein_full")) {
+    tab_name   <- paste0(subgroup, "_", ifelse(dataset == "protein_full", "full", "sub"))
+    sheet_data <- results_protein[results_protein$SubGroup == subgroup & results_protein$Dataset == dataset, ]
+    addWorksheet(wb_protein, tab_name)
+    writeData(wb_protein, tab_name, sheet_data)
+  }
+}
+
+saveWorkbook(wb_protein, "Protein_Correlation_Results.xlsx", overwrite = TRUE)
+```
+Step #4: Fat
+```{r}
+fat_full <- read.csv("PSM Data/Correlation/fat.csv")
+
+nutrient_list_fat <- list(
+  list(df = CGYL_Fat,  col = "Fat", dataset = "CGYL"),
+  list(df = CGML_Fat,  col = "Fat", dataset = "CGML")
+)
+
+results_fat <- data.frame(
+  Dataset  = character(),
+  SubGroup = character(),
+  Measure  = character(),
+  N        = integer(),
+  rho      = numeric(),
+  R2       = numeric(),
+  p_value  = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (item in nutrient_list_fat) {
+  merged_data <- merge(fat_full, item$df, by.x = "NPC.pathway", by.y = "PSM_match")
+  
+  if (nrow(merged_data) == 0) {
+    message("Skipping ", item$dataset, " ", item$col, " - no rows after merge")
+    next
+  }
+  
+  merged_data$FattyAcids_log <- log1p(merged_data$Fatty.acids)
+  
+  correlation_test <- cor.test(
+    merged_data$FattyAcids_log,
+    merged_data[[item$col]],
+    method = "spearman",
+    use = "complete.obs",
+    exact = FALSE
+  )
+  
+  rho_val <- unname(correlation_test$estimate)
+  
+  results_fat <- rbind(results_fat, data.frame(
+    Dataset  = "fat_full",
+    SubGroup = item$dataset,
+    Measure  = item$col,
+    N        = sum(complete.cases(merged_data$FattyAcids_log, merged_data[[item$col]])),
+    rho      = rho_val,
+    R2       = rho_val^2,
+    p_value  = correlation_test$p.value
+  ))
+}
+
+wb_fat <- createWorkbook()
+
+
+for (subgroup in c("CGYL", "CGML")) {
+  for (dataset in c("fat_full")) {
+    tab_name   <- paste0(subgroup, "_", ifelse(dataset == "fat_full", "full", "sub"))
+    sheet_data <- results_fat[results_fat$SubGroup == subgroup & results_fat$Dataset == dataset, ]
+    addWorksheet(wb_fat, tab_name)
+    writeData(wb_fat, tab_name, sheet_data)
+  }
+}
+
+saveWorkbook(wb_fat, "Fat_Correlation_Results.xlsx", overwrite = TRUE)
+```
+Step 5: Graphs 
+```{r}
+plot_sig_corr <- function(data, xvar, yvar, xlab, ylab) {
+  cor_test <- cor.test(data[[xvar]], data[[yvar]],
+                       use = "complete.obs",
+                       method = "spearman",
+                       exact = FALSE)
+  rho_val <- round(unname(cor_test$estimate), 2)
+  r2_val  <- round(unname(cor_test$estimate)^2, 2)
+  p_val <- signif(cor_test$p.value, 2)
+  p_text <- ifelse(p_val < 0.001, "p < 0.001", paste0("p = ", p_val))
+  
+  ggplot(data, aes(x = .data[[xvar]], y = .data[[yvar]])) +
+    geom_point(size = 3, color = "#336B87") +
+    geom_smooth(method = "lm", se = TRUE, color = "#763626") +
+    labs(x = xlab, y = ylab) +
+    geom_label(
+      aes(x = -Inf, y = Inf,
+          label = paste0("rho = ", rho_val, ", R\u00B2 = ", r2_val, ", ", p_text)),
+      hjust = -0.05,
+      vjust = -0.6,
+      size = 5,
+      fill = "white",
+      color = "black",
+      linewidth = 0,
+      inherit.aes = FALSE
+    ) +
+    coord_cartesian(clip = "off") +
+    theme_classic(base_size = 12) +
+    theme(
+      plot.margin = ggplot2::margin(t = 18, r = 5, b = 5, l = 5)
+    )
+}
+
+make_plots <- function(ndf, adf, adl, sugar, cp, ap, fat,
+                       carbs_psm, shikimates_psm, protein_psm, fat_psm) {
+  
+  p_NDF <- {
+    df <- merge(carbs_psm, ndf, by.x = "NPC.pathway", by.y = "PSM_match")
+    df$Carb <- log1p(df$Carbohydrates)
+    plot_sig_corr(df, "NDF", "Carb", "Neutral detergent fiber", "Carbohydrates")
+  }
+  
+  p_ADF <- {
+    df <- merge(carbs_psm, adf, by.x = "NPC.pathway", by.y = "PSM_match")
+    df$Carb <- log1p(df$Carbohydrates)
+    plot_sig_corr(df, "ADF", "Carb", "Acid detergent fiber", "Carbohydrates")
+  }
+  
+  p_ADL <- {
+    df <- merge(shikimates_psm, adl, by.x = "NPC.pathway", by.y = "PSM_match")
+    df$Shikimates <- log1p(df$Shikimates.and.Phenylpropanoids)
+    plot_sig_corr(df, "ADL", "Shikimates", "Acid detergent lignin", "Shikimates & Phenylpropanoids")
+  }
+  
+  p_Sugar <- {
+    df <- merge(carbs_psm, sugar, by.x = "NPC.pathway", by.y = "PSM_match")
+    df$Carb_log  <- log1p(df$Carbohydrates)
+    df$Sugar_log <- log1p(df$Sugar)
+    plot_sig_corr(df, "Sugar_log", "Carb_log", "Sugars", "Carbohydrates")
+  }
+  
+  p_CP <- {
+    df <- merge(protein_psm, cp, by.x = "NPC.pathway", by.y = "PSM_match")
+    df$Prot <- log1p(df$Amino.acids.and.Peptides)
+    plot_sig_corr(df, "CP", "Prot", "Crude Protein", "Amino acids & Peptides")
+  }
+  
+  p_AP <- {
+    df <- merge(protein_psm, ap, by.x = "NPC.pathway", by.y = "PSM_match")
+    df$Prot <- log1p(df$Amino.acids.and.Peptides)
+    df$APx  <- df$AP
+    plot_sig_corr(df, "APx", "Prot", "Available Protein", "Amino acids & Peptides")
+  }
+  
+  p_Fat <- {
+    df <- merge(fat_psm, fat, by.x = "NPC.pathway", by.y = "PSM_match")
+    df$FA_log <- log1p(df$Fatty.acids)
+    df$Fat_x  <- df$Fat
+    plot_sig_corr(df, "Fat_x", "FA_log", "Fat", "Fatty acids")
+  }
+  
+  combined <- wrap_plots(
+    p_Sugar, p_NDF, p_ADF, p_CP, p_AP, p_Fat, p_ADL,
+    ncol = 2
+  ) +
+    plot_annotation(tag_levels = "a")
+  
+  return(combined)
+}
+
+plot_CGYL <- make_plots(
+  ndf            = CGYL_ndf,
+  adf            = CGYL_adf,
+  adl            = CGYL_adl,
+  sugar          = CGYL_Sugar,
+  cp             = CGYL_CP,
+  ap             = CGYL_AP,
+  fat            = CGYL_Fat,
+  carbs_psm      = carbs_full,
+  shikimates_psm = shikimates_full,
+  protein_psm    = protein_full,
+  fat_psm        = fat_full
+)
+plot_CGYL
+ggsave("Fig_CGYL_Correlations.pdf", plot = plot_CGYL,
+       width = 8, height = 10, units = "in", device = cairo_pdf, limitsize = FALSE)
+ggsave("Fig_CGYL_Correlations.png", plot = plot_CGYL,
+       width = 8, height = 10, units = "in", dpi = 300, limitsize = FALSE)
+
+plot_CGML <- make_plots(
+  ndf            = CGML_ndf,
+  adf            = CGML_adf,
+  adl            = CGML_adl,
+  sugar          = CGML_Sugar,
+  cp             = CGML_CP,
+  ap             = CGML_AP,
+  fat            = CGML_Fat,
+  carbs_psm      = carbs_full,
+  shikimates_psm = shikimates_full,
+  protein_psm    = protein_full,
+  fat_psm        = fat_full
+)
+plot_CGML
+
+plot_YLall <- make_plots(
+  ndf            = YLall_ndf,
+  adf            = YLall_adf,
+  adl            = YLall_adl,
+  sugar          = YLall_Sugar,
+  cp             = YLall_CP,
+  ap             = YLall_AP,
+  fat            = YLall_Fat,
+  carbs_psm      = carbs_full,
+  shikimates_psm = shikimates_full,
+  protein_psm    = protein_full,
+  fat_psm        = fat_full
+)
+
+plot_all <- make_plots(
+  ndf            = NDF,
+  adf            = ADF,
+  adl            = ADL,
+  sugar          = Sugar,
+  cp             = CP,
+  ap             = AP,
+  fat            = Fat,
+  carbs_psm      = carbs_full,
+  shikimates_psm = shikimates_full,
+  protein_psm    = protein_full,
+  fat_psm        = fat_full
+)
+```
+Step 6: Species averages 
+```{r}
+TNC_species_avg <- TNC %>%
+  filter(Part == "YL") %>%
+  group_by(Species) %>%
+  summarise(TNC = mean(TNC, na.rm = TRUE), n = n())
+
+NDF_species_avg <- NDF %>%
+  filter(Part == "YL") %>%
+  group_by(Species) %>%
+  summarise(NDF = mean(NDF, na.rm = TRUE), n = n())
+
+ADF_species_avg <- ADF %>%
+  filter(Part == "YL") %>%
+  group_by(Species) %>%
+  summarise(ADF = mean(ADF, na.rm = TRUE), n = n())
+
+ADL_species_avg <- ADL %>%
+  filter(Part == "YL") %>%
+  group_by(Species) %>%
+  summarise(ADL = mean(ADL, na.rm = TRUE), n = n())
+
+Sugar_species_avg <- Sugar %>%
+  filter(Part == "YL") %>%
+  group_by(Species) %>%
+  summarise(Sugar = mean(Sugar, na.rm = TRUE), n = n())
+
+Starch_species_avg <- Starch %>%
+  filter(Part == "YL") %>%
+  group_by(Species) %>%
+  summarise(Starch = mean(Starch, na.rm = TRUE), n = n())
+
+CP_species_avg <- CP %>%
+  filter(Part == "YL") %>%
+  group_by(Species) %>%
+  summarise(CP = mean(CP, na.rm = TRUE), n = n())
+
+AP_species_avg <- AP %>%
+  filter(Part == "YL") %>%
+  group_by(Species) %>%
+  summarise(AP = mean(AP, na.rm = TRUE), n = n())
+
+Fat_species_avg <- Fat %>%
+  filter(Part == "YL") %>%
+  group_by(Species) %>%
+  summarise(Fat = mean(Fat, na.rm = TRUE), n = n())
+
+species_lookup <- TNC %>%
+  filter(Part == "YL") %>%
+  select(PSM_match, Species) %>%
+  distinct()
+
+carbs_combined      <- merge(carbs_full, species_lookup, by.x = "NPC.pathway", by.y = "PSM_match")
+shikimates_combined <- merge(shikimates_full, species_lookup, by.x = "NPC.pathway", by.y = "PSM_match")
+protein_combined    <- merge(protein_full, species_lookup, by.x = "NPC.pathway", by.y = "PSM_match")
+fat_combined        <- merge(fat_full, species_lookup, by.x = "NPC.pathway", by.y = "PSM_match")
+
+carbs_sp <- carbs_combined %>%
+  group_by(Species) %>%
+  summarise(Carbohydrates = mean(Carbohydrates, na.rm = TRUE), n = n())
+
+shikimates_sp <- shikimates_combined %>%
+  group_by(Species) %>%
+  summarise(Shikimates = mean(Shikimates.and.Phenylpropanoids, na.rm = TRUE), n = n())
+
+protein_sp <- protein_combined %>%
+  group_by(Species) %>%
+  summarise(Protein = mean(Amino.acids.and.Peptides, na.rm = TRUE), n = n())
+
+fat_metab_sp <- fat_combined %>%
+  group_by(Species) %>%
+  summarise(FattyAcids = mean(Fatty.acids, na.rm = TRUE), n = n())
+
+
+plot_sig_corr <- function(data, xvar, yvar, xlab, ylab) {
+  cor_test <- cor.test(data[[xvar]], data[[yvar]],
+                       use = "complete.obs", method = "spearman", exact = FALSE)
+  rho_val <- round(unname(cor_test$estimate), 2)
+  r2_val  <- round(unname(cor_test$estimate)^2, 2)
+  p_val <- signif(cor_test$p.value, 2)
+  p_text <- ifelse(p_val < 0.001, "p < 0.001", paste0("p = ", p_val))
+  
+  ggplot(data, aes(x = .data[[xvar]], y = .data[[yvar]], label = Species)) +
+    geom_point(size = 3, color = "#336B87") +
+    geom_smooth(method = "lm", se = TRUE, color = "#763626") +
+    geom_text_repel(size = 3, max.overlaps = 20) +
+    labs(x = xlab, y = ylab) +
+    geom_label(
+      aes(x = -Inf, y = Inf, label = paste0("rho = ", rho_val, ", R\u00B2 = ", r2_val, ", ", p_text)),
+      hjust = -0.05, vjust = -0.6, size = 5,
+      fill = "white", color = "black", linewidth = 0,
+      inherit.aes = FALSE
+    ) +
+    coord_cartesian(clip = "off") +
+    theme_classic(base_size = 12) +
+    theme(plot.margin = ggplot2::margin(t = 18, r = 5, b = 5, l = 5))
+}
+
+df_ndf <- merge(carbs_sp, NDF_species_avg, by = "Species")
+df_ndf$Carb <- log1p(df_ndf$Carbohydrates)
+p_NDF <- plot_sig_corr(df_ndf, "NDF", "Carb", "Neutral detergent fiber", "Carbohydrates")
+
+df_adf <- merge(carbs_sp, ADF_species_avg, by = "Species")
+df_adf$Carb <- log1p(df_adf$Carbohydrates)
+p_ADF <- plot_sig_corr(df_adf, "ADF", "Carb", "Acid detergent fiber", "Carbohydrates")
+
+df_adl <- merge(shikimates_sp, ADL_species_avg, by = "Species")
+df_adl$Shikimates_log <- log1p(df_adl$Shikimates)
+p_ADL <- plot_sig_corr(df_adl, "ADL", "Shikimates_log", "Acid detergent lignin", "Shikimates & Phenylpropanoids")
+
+df_sugar <- merge(carbs_sp, Sugar_species_avg, by = "Species")
+df_sugar$Carb_log  <- log1p(df_sugar$Carbohydrates)
+df_sugar$Sugar_log <- log1p(df_sugar$Sugar)
+p_Sugar <- plot_sig_corr(df_sugar, "Sugar_log", "Carb_log", "Sugars", "Carbohydrates")
+
+df_starch <- merge(carbs_sp, Starch_species_avg, by = "Species")
+df_starch$Carb_log <- log1p(df_starch$Carbohydrates)
+p_Starch <- plot_sig_corr(df_starch, "Starch", "Carb_log", "Starch", "Carbohydrates")
+
+df_cp <- merge(protein_sp, CP_species_avg, by = "Species")
+df_cp$Prot <- log1p(df_cp$Protein)
+p_CP <- plot_sig_corr(df_cp, "CP", "Prot", "Crude Protein", "Amino acids & Peptides")
+
+df_ap <- merge(protein_sp, AP_species_avg, by = "Species")
+df_ap$Prot <- log1p(df_ap$Protein)
+p_AP <- plot_sig_corr(df_ap, "AP", "Prot", "Available Protein", "Amino acids & Peptides")
+
+df_fat <- merge(fat_metab_sp, Fat_species_avg, by = "Species")
+df_fat$FA_log <- log1p(df_fat$FattyAcids)
+p_Fat <- plot_sig_corr(df_fat, "Fat", "FA_log", "Fat", "Fatty acids")
+
+get_corr_stats <- function(data, xvar, yvar, measure_label) {
+  cor_test <- cor.test(data[[xvar]], data[[yvar]],
+                       use = "complete.obs", method = "spearman", exact = FALSE)
+  rho_val <- unname(cor_test$estimate)
+  
+  data.frame(
+    Measure = measure_label,
+    N       = sum(complete.cases(data[[xvar]], data[[yvar]])),
+    rho     = round(rho_val, 3),
+    R2      = round(rho_val^2, 3),
+    p_value = cor_test$p.value,
+    stringsAsFactors = FALSE
+  )
+}
+
+results_species_avg <- rbind(
+  get_corr_stats(df_sugar,  "Sugar_log", "Carb_log", "Sugar vs Carbohydrates"),
+  get_corr_stats(df_starch, "Starch",    "Carb_log", "Starch vs Carbohydrates"),
+  get_corr_stats(df_ndf,    "NDF",       "Carb",     "NDF vs Carbohydrates"),
+  get_corr_stats(df_adf,    "ADF",       "Carb",     "ADF vs Carbohydrates"),
+  get_corr_stats(df_cp,     "CP",        "Prot",     "CP vs Protein"),
+  get_corr_stats(df_ap,     "AP",        "Prot",     "AP vs Protein"),
+  get_corr_stats(df_fat,    "Fat",       "FA_log",   "Fat vs Fatty acids"),
+  get_corr_stats(df_adl,    "ADL",       "Shikimates_log", "ADL vs Shikimates")
+)
+
+print(results_species_avg)
+write.csv(results_species_avg, "SpeciesMeans_Correlation_Results.csv", row.names = FALSE)
+```
